@@ -1,11 +1,25 @@
 services:
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mysql
+    environment:
+      - DB_HOST=mysql
+      - DB_USER=user
+      - DB_PASSWORD=user_password
+      - DB_NAME=scraper_db
+    volumes:
+      - .:/app
+
   mysql:
     image: mysql:8.0
     container_name: mysql_server
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: root_password
-      MYSQL_DATABASE: bookdb
+      MYSQL_DATABASE: scraper_db
       MYSQL_USER: user
       MYSQL_PASSWORD: user_password
     ports:

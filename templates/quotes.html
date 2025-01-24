@@ -1,26 +1,42 @@
 {% extends 'base.html' %}
 
-{% block title %}| Quotes scrapping{% endblock title %}
+{% block title %}| Quotes Scraper{% endblock title %}
 
 {% block main_container %}
 <div class="container">
-    <h1 class="heading">Quotes Scraped Data</h1>
-    <table>
-        <tbody>
-            <tr>
-                {% for column in columns %}
+    <h1 class="heading">Scraped Quotes</h1>
 
-                <th class="table-head">{{column}}</th>
-                {% endfor %}
-            </tr>
-            {% for record in records %}
-            <tr>
-                {% for column_data in record %}
-                    <td class="table-data">{{column_data}}</td>
-                {% endfor %}
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    {% if error %}
+    <div
+        style="background-color: rgba(239, 68, 68, 0.1); color: #f87171; padding: 1rem; border-radius: 0.5rem; margin-bottom: 2rem; border: 1px solid rgba(239, 68, 68, 0.2);">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <div class="card-grid">
+        {% for record in records %}
+        <div class="card">
+            <div class="card-body">
+                <div class="card-text" style="font-size: 1.1rem; font-style: italic; color: var(--text-color);">
+                    "{{ record[0] }}"
+                </div>
+                <div class="card-subtitle" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span
+                        style="height: 2px; width: 20px; background-color: var(--primary-color); display: inline-block;"></span>
+                    {{ record[1] }}
+                </div>
+                <div style="margin-top: 1rem;">
+                    {% if record[2] %}
+                    {% for tag in record[2].split(',') %}
+                    {% if tag %}
+                    <span class="tag">#{{ tag.strip() }}</span>
+                    {% endif %}
+                    {% endfor %}
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
 </div>
 {% endblock main_container %}

@@ -3,22 +3,19 @@
 # Don't forget to add your pipeline to the ITEM_PIPELINES setting
 # See: https://docs.scrapy.org/en/latest/topics/item-pipeline.html
 
-
-# useful for handling different item types with a single 
 from datetime import datetime
 from itemadapter import ItemAdapter
-from quotes_scrape.items import QuotesScrapeItem, AuthorScrapeItem
-import configparser
 import mysql.connector
+import os
+from dotenv import load_dotenv
 
-config = configparser.ConfigParser()
-config.read('config.ini')
+# Load environment variables
+load_dotenv()
 
-# config variable
-DB_HOST     = config["DATABASE"]["db_host"]
-DB_USER     = config["DATABASE"]["db_user"]
-DB_PASSWORD = config["DATABASE"]["db_password"]
-DB_NAME     = config["DATABASE"]["db_name"]
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "scraper_db") # Default to scraper_db if not set
 
 class QuotesScrapePipeline:
     def process_item(self, item, spider):
@@ -29,91 +26,118 @@ class QuotesScrapePipeline:
 
         for field_name in field_names:
             value = adapter.get(field_name)
-            adapter[field_name] = value.strip()
+            if value:
+                adapter[field_name] = value.strip()
         
         # lowercase tags
         field_tags = "tags"
         tags = adapter.get(field_tags)
-        adapter[field_tags] = [tag.lower().strip() for tag in tags]
+        if tags:
+            adapter[field_tags] = [tag.lower().strip() for tag in tags]
 
         # cleaning author_data
         author_field = "author_info"
         author_data = adapter.get(author_field)
-        for (key, values) in author_data.items():
-            author_data[key] = author_data[key].strip().replace("\"", "'")
-        adapter[author_field] = author_data
+        if author_data:
+            for (key, values) in author_data.items():
+                if author_data[key]:
+                    author_data[key] = author_data[key].strip().replace("\"", "'")
+            adapter[author_field] = author_data
         return item
 
 
 class SaveQuotesItemMySQL:
     def __init__(self):
-        self.conn = mysql.connector.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME
-        )
-        self.cur = self.conn.cursor()
-        self.cur.execute("""
-        CREATE TABLE IF NOT EXISTS quotes (
-            id INTEGER NOT NULL AUTO_INCREMENT,
-            author VARCHAR(128),
-            tags VARCHAR(255),
-            quote TEXT,
-            PRIMARY KEY (id)
-        )
-        """)
-        self.conn.commit()
-
-        self.cur.execute("""
-        CREATE TABLE IF NOT EXISTS author (
-            name VARCHAR(128),
-            dob DATE,
-            birthplace VARCHAR(255),
-            description TEXT,
-            quote_id INTEGER,
-            FOREIGN KEY (quote_id) REFERENCES quotes(id)
-        )
-        """)
-        self.conn.commit()
+        try:
+            self.conn = mysql.connector.connect(
+                host=DB_HOST,
+                user=DB_USER,
+                password=DB_PASSWORD,
+                database=DB_NAME
+            )
+            self.cur = self.conn.cursor()
+            
+            # Create authors table first (parent)
+            self.cur.execute("""
+            CREATE TABLE IF NOT EXISTS authors (
+                id INTEGER NOT NULL AUTO_INCREMENT,
+                name VARCHAR(128) UNIQUE,
+                dob DATE,
+                birthplace VARCHAR(255),
+                description TEXT,
+                PRIMARY KEY (id)
+            )
+            """)
+            
+            # Create quotes table (child)
+            self.cur.execute("""
+            CREATE TABLE IF NOT EXISTS quotes (
+                id INTEGER NOT NULL AUTO_INCREMENT,
+                quote TEXT,
+                tags VARCHAR(255),
+                author_id INTEGER,
+                PRIMARY KEY (id),
+                FOREIGN KEY (author_id) REFERENCES authors(id)
+            )
+            """)
+            self.conn.commit()
+        except mysql.connector.Error as err:
+            print(f"Error connecting to database: {err}")
+            raise
 
     def process_item(self, item, spider):
-        author_item = item["author_info"]
+        author_item = item.get("author_info")
+        if not author_item:
+            return item
 
-        # Parse the date and format it to 'YYYY-MM-DD'
-        dob_formatted = datetime.strptime(author_item["dob"], '%B %d, %Y').strftime('%Y-%m-%d')
-    
-        
-        # Insert data into the 'quotes' table
-        self.cur.execute("""
-            INSERT INTO quotes (author, tags, quote) VALUES (%s, %s, %s)
-            """,
-            (item["author"],
-            (',').join(item["tags"]),
-            item["quote"])
-        )
+        try:
+            # Parse the date and format it to 'YYYY-MM-DD'
+            dob_formatted = None
+            if author_item.get("dob"):
+                try:
+                    dob_formatted = datetime.strptime(author_item["dob"], '%B %d, %Y').strftime('%Y-%m-%d')
+                except ValueError:
+                    pass # Handle date parsing error if needed
 
-        # Fetch the last inserted row ID (quote_id)
-        quote_id = self.cur.lastrowid
+            # Check if author exists
+            self.cur.execute("SELECT id FROM authors WHERE name = %s", (author_item["name"],))
+            result = self.cur.fetchone()
 
-        # Insert data into the 'author' table using the fetched quote_id
-        self.cur.execute("""
-            INSERT INTO author (name, dob, birthplace, description, quote_id)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (author_item["name"],
-            dob_formatted,
-            author_item["birth_place"],
-            author_item["description"],
-            quote_id) 
-        )
+            if result:
+                author_id = result[0]
+            else:
+                # Insert new author
+                self.cur.execute("""
+                    INSERT INTO authors (name, dob, birthplace, description)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (author_item["name"],
+                    dob_formatted,
+                    author_item["birth_place"],
+                    author_item["description"])
+                )
+                author_id = self.cur.lastrowid
+            
+            # Insert quote linked to author
+            tags_str = ','.join(item["tags"]) if item.get("tags") else ""
+            
+            self.cur.execute("""
+                INSERT INTO quotes (quote, tags, author_id) VALUES (%s, %s, %s)
+                """,
+                (item["quote"],
+                tags_str,
+                author_id)
+            )
 
-        # Commit changes to the database
-        self.conn.commit()
+            self.conn.commit()
+        except mysql.connector.Error as err:
+            print(f"Error processing item: {err}")
+            self.conn.rollback()
+            
         return item
     
     def close_spider(self, spider):
-        # Close cursor and connection to the database.
-        self.cur.close()
-        self.conn.close()
-
+        if hasattr(self, 'cur') and self.cur:
+            self.cur.close()
+        if hasattr(self, 'conn') and self.conn:
+            self.conn.close()

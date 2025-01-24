@@ -1,25 +1,20 @@
 '''Module to connect to mysql database'''
 import os
-import configparser
 import mysql.connector
+from dotenv import load_dotenv
 
-config = configparser.ConfigParser()
-config.read('config.ini')
+load_dotenv()
 
 # config variable
-DB_HOST     = config["DATABASE"]["db_host"]
-DB_USER     = config["DATABASE"]["db_user"]
-DB_PASSWORD = config["DATABASE"]["db_password"]
-DB_NAME     = config["DATABASE"]["db_name"]
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "scraper_db")
 
 
 class MyDatabase:
-    def __init__(self, db_host: str="localhost", 
-                    db_user: str="root", 
-                    db_password: str="", 
-                    db_name: str="bookdb"):
+    def __init__(self, db_host=DB_HOST, db_user=DB_USER, db_password=DB_PASSWORD, db_name=DB_NAME):
         try:
-            os.system("sudo service mysql start")
             self.conn = mysql.connector.connect(
                 host=db_host,
                 user=db_user,
@@ -55,26 +50,33 @@ class MyDatabase:
     def get_tables_name(self):
         self.cur.execute("SHOW TABLES;")
         all_user_tables = [table[0] for table in self.cur.fetchall() if table[0] not in self.sys_table]
-        if not all_user_tables:
-            if self.db_name == "bookdb":
-                os.system("cd bookscrape && scrapy crawl bookspider")
-            elif self.db_name == "quotesdb":
-                os.system("cd quotes_scrape && scrapy crawl quotespider")
         return all_user_tables
 
     def get_column_names(self, table_name):
         '''Get all column names of a table'''
+        # Validate table_name to prevent SQL injection
+        if not table_name.isidentifier():
+            raise ValueError("Invalid table name")
+            
         self.cur.execute(f"SHOW COLUMNS FROM {table_name}")
         columns = [column[0] for column in self.cur.fetchall()]
         print(f"[INFO] Columns are: {columns}")
         return columns
 
     def get_records(self, table, limit=5, offset=None):
+        # Validate table name
+        if not table.isidentifier():
+            return "Invalid table name"
+
         try:
-            if offset is None:
-                self.cur.execute(f"SELECT * FROM {table} LIMIT {limit}")
-            else:
-                self.cur.execute(f"SELECT * FROM {table} LIMIT {limit} OFFSET {offset}")
+            query = f"SELECT * FROM {table} LIMIT %s"
+            params = [limit]
+            
+            if offset is not None:
+                query += " OFFSET %s"
+                params.append(offset)
+                
+            self.cur.execute(query, tuple(params))
             records = self.cur.fetchall()
             return records
         except mysql.connector.Error as err:
@@ -85,13 +87,23 @@ class MyDatabase:
         self.cur.close()
         self.conn.close()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close_connection()
 
 
 if __name__ == "__main__":
-    db = MyDatabase(db_host=DB_HOST, db_user=DB_USER, db_password=DB_PASSWORD)
-    SAMPLE_TABLE_NAME = "books"
-    column_names = db.get_column_names(SAMPLE_TABLE_NAME)
-    all_tables = db.get_tables_name()
-    db.get_records(SAMPLE_TABLE_NAME)
-    # print(f"Column names of the table '{all_tables}':")
-    db.close_connection()
+    try:
+        with MyDatabase() as db:
+            SAMPLE_TABLE_NAME = "books"
+            # Check if table exists before querying
+            tables = db.get_tables_name()
+            if SAMPLE_TABLE_NAME in tables:
+                column_names = db.get_column_names(SAMPLE_TABLE_NAME)
+                db.get_records(SAMPLE_TABLE_NAME)
+            else:
+                print(f"Table {SAMPLE_TABLE_NAME} not found.")
+    except Exception as e:
+        print(f"An error occurred: {e}")

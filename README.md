@@ -1,160 +1,102 @@
-# Scrapy Quick Start Guide
+# Web Scraping Python Scraper
 
-### Setting Up a Scrapy Project
+This project demonstrates a web scraping pipeline using **Scrapy**, **Flask**, and **MySQL**, fully containerized with **Docker**.
 
-**Note:** If you're working in a global GitHub environment, it's recommended to create a virtual environment to prevent potential issues.
+It includes two main scrapers:
+1.  **Book Scraper**: Scrapes books from [books.toscrape.com](http://books.toscrape.com).
+2.  **Quotes Scraper**: Scrapes quotes and authors from [quotes.toscrape.com](http://quotes.toscrape.com).
 
-```bash
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
+## Features
+- **Scrapy**: Powerful web crawling and scraping.
+- **Flask**: Web interface to view scraped data.
+- **MySQL**: Persistent storage for scraped data.
+- **Docker**: Easy deployment and environment management.
+- **Secure Configuration**: Uses `.env` for sensitive credentials.
+- **Normalized Schema**: Efficient database design for quotes and authors.
 
-1. Set up the database using Docker in detached mode. You can use the following [docker-compose.yaml](./docker-compose.yaml) configuration:
+## Prerequisites
+- Docker and Docker Compose installed on your machine.
 
-    ```bash
-    docker compose up -d
-    ```
+## Getting Started
 
-Alternatively, refer to [DATABASE-CMD.md](DATABASE-CMD.md) for instructions on setting up MySQL locally instead of using Docker.
-
-2. Run the Scrapy spiders: If you arenot using the virtual environment while using `scrapy` command. **Replace the `scrapy` command with the `python -m scrapy` to solve the issue of not finding command**
-    ```bash
-    cd bookscrape
-    scrapy crawl bookspider
-    cd ../quotes_scrape
-    scrapy crawl quotespider
-    ```
-
-3. Launch the Flask app:
-
-    ```bash
-    python app.py
-    ```
-
-
-### Starting a New Scrapy Project
-
-1. To create a new Scrapy project, use the following command:
-    ```bash
-    python -m scrapy startproject <projectname>
-    ```
-
-2. To run a Scrapy spider:
-    ```bash
-    cd <projectname>
-    python -m scrapy genspider bookspider books.toscrape.com
-    python -m scrapy crawl bookspider
-    ```
-
-3. To set up an interactive shell for debugging:
-    ```bash
-    pip install ipython
-    ```
-
-Follow these steps to quickly set up and run your Scrapy project. The provided commands will help you configure the environment, run spiders, and use the Scrapy shell for efficient debugging.
-
-### Sample File for `bookscrape.py`
-
-```python
-import scrapy
-
-class BookspiderSpider(scrapy.Spider):
-    name = "bookspider"
-    allowed_domains = ["books.toscrape.com"]
-    start_urls = ["https://books.toscrape.com"]
-
-    def parse(self, response):
-        books = response.css('.product_pod')
-        for book in books:
-            yield {
-                'name': book.css('h3 a::text').get(),
-                'price': book.css('.product_price .price_color::text').get(),
-                'url': book.css('h3 a').attrib['href']
-            }
-        
-        next_page = response.css('.pager li.next a::attr("href")').get()
-        if next_page is not None:
-            next_page = 'catalogue/' + next_page if 'catalogue' not in next_page else next_page
-            next_page_url = "https://books.toscrape.com/" + next_page
-            yield response.follow(next_page_url, callback=self.parse)
-```
-
-### Saving Scraped Data to a File
-
-1. To overwrite the file every time you run Scrapy:
-
-    ```bash
-    scrapy crawl bookspider -O data.csv
-    ```
-
-2. To append data to the same file:
-
-    ```bash
-    scrapy crawl bookspider -o data.csv
-    ```
-
-3. You can specify the format for saving the file in `settings.py`:
-
-    ```python
-    FEEDS = {
-        'book.json': {'format': 'json'}
-    }
-    ```
-
-    Run Scrapy as usual. It will save the file as `book.json`.
-
-    ```bash
-    scrapy crawl bookspider
-    ```
-
-For database installation, see: [DATABASE-CMD.md](https://github.com/realsanjeev/Book-scraping-python-scapper/blob/main/DATABASE-CMD.md)
-
-### Python Package Manager for MySQL
-
-To install the MySQL connector for Python:
+### 1. Configuration
+Create a `.env` file in the root directory to configure your database credentials. You can copy the example below:
 
 ```bash
-pip install mysql-connector-python
+# .env
+DB_HOST=mysql
+DB_USER=user
+DB_PASSWORD=user_password
+DB_NAME=bookdb
 ```
 
-Create a database and update the database name in `bookscrape/bookscrape/pipeline.py` under the `SaveToMySQLPipeline` class to match your database.
+> [!NOTE]
+> When running with Docker, `DB_HOST` should be set to `mysql` (the service name).
 
-### For Rotating Proxies
-
-To install the rotating proxies middleware for Scrapy:
+### 2. Run the Application
+Start the entire stack (Database + Web App) using Docker Compose:
 
 ```bash
-pip install scrapy-rotating-proxies
+docker compose up --build
 ```
-<!-- ##### For config env variable -->
 
+- The Flask application will be available at: [http://localhost:5000](http://localhost:5000)
+- The MySQL database will be running on port `3306`.
 
+### 3. Running Scrapers
+To populate the database, you need to run the spiders. You can run them inside the running web container.
 
+**Run Book Scraper:**
+```bash
+docker compose exec web bash -c "cd bookscrape && scrapy crawl bookspider"
+```
+
+**Run Quotes Scraper:**
+```bash
+docker compose exec web bash -c "cd quotes_scrape && scrapy crawl quotespider"
+```
+
+### 4. View Data
+Once the scrapers have finished, visit [http://localhost:5000](http://localhost:5000) to browse the data:
+- **Books**: [http://localhost:5000/book](http://localhost:5000/book)
+- **Quotes**: [http://localhost:5000/quotes](http://localhost:5000/quotes)
+
+## Project Structure
+
+- `bookscrape/`: Scrapy project for books.
+- `quotes_scrape/`: Scrapy project for quotes (with normalized schema).
+- `app.py`: Flask application for the web interface.
+- `pipeline.py`: Database connection logic (refactored to use `.env`).
+- `docker-compose.yaml`: Docker services configuration.
+- `Dockerfile`: Build instructions for the web app.
+
+## Troubleshooting
+
+### Database Permission Errors
+If you encounter database permission errors like `Access denied for user 'user'@'%' to database 'scraper_db'`, it's likely because the MySQL volume contains old database data. To fix this:
+
+```bash
+# Stop containers and remove volumes
+docker compose down -v
+
+# Start fresh
+docker compose up -d
+```
+
+> [!WARNING]
+> Using `-v` will delete all scraped data. Make sure to backup if needed.
+
+## Development
+
+If you want to run the project locally without Docker (not recommended for beginners due to database setup):
+
+1.  Install dependencies: `pip install -r requirements.txt`
+2.  Set up a local MySQL database.
+3.  Update `.env` with `DB_HOST=localhost`.
+4.  Run the app: `python app.py`
 
 ## Contributing
-
-Contributions are welcome! If you find any issues or want to add new features, feel free to submit a pull request.
-
-## Contact Me
-
-<table>
-  <tr>
-    <td><img src="https://github.com/realsanjeev/protfolio/blob/main/src/assets/images/instagram.png" alt="Instagram" width="50" height="50"></td>
-    <td><img src="https://github.com/realsanjeev/protfolio/blob/main/src/assets/images/twitter.png" alt="Twitter" width="50" height="50"></td>
-    <td><img src="https://github.com/realsanjeev/protfolio/blob/main/src/assets/images/github.png" alt="GitHub" width="50" height="50"></td>
-    <td><img src="https://github.com/realsanjeev/protfolio/blob/main/src/assets/images/linkedin-logo.png" alt="LinkedIn" width="50" height="50"></td>
-  </tr>
-</table>
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
-
 This project is licensed under the [GNU GENERAL PUBLIC LICENSE](LICENSE).
-
----
-
-
-This guide provides the steps to set up and run a Scrapy project, including running spiders, managing the environment, and handling data output. Use it to streamline your web scraping tasks.
-
-Feel free to modify and enhance this `README.md` as needed to match your specific project details. The provided steps are generic, and you should customize them according to the actual setup and configuration of your "Web-Scrapping-python-scrapper" project.
-
